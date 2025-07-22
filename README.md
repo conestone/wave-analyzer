@@ -31,7 +31,7 @@ The script automatically checks and installs required packages:
 
 ```
 project/
-├── analyzer.py             # Main analysis script (place in project root)
+├── analyzer.py             # Main analysis script
 ├── input/                  # Place your CSV data files here
 │   ├── file1.csv          # Multiple CSV files supported
 │   ├── file2.csv
@@ -83,13 +83,11 @@ plot_padding_sec: 60              # Plot padding around events (seconds)
 
 ## Input Data Format
 
-The analyzer now supports two input methods:
-
 ### Method 1: Multiple CSV Files (Recommended)
 Place multiple CSV files in the `input/` directory. Each file should contain:
-- **Direction column**: Wave measurement direction identifier
+- **Direction column**: Wave measurement direction identifier (lateral, vertical)
 - **Date column**: Date information for measurements
-- **Sample columns**: 32 sample columns (sample1, sample2, ..., sample32) containing wave measurements
+- **Sample columns**: sample columns (sample1, sample2, ..., sample32) containing wave measurements
 
 ### Method 2: Legacy Single CSV File
 Single CSV file with time series data containing:
@@ -219,9 +217,5 @@ python analyzer.py custom_config.yaml
 ## Author
 
 **Oliver Konold**  
-Version: 1.1 - Integrated DataLoader  
+Version: 1.1 
 Year: 2025
-
-## License
-
-This tool is provided as-is for wave analysis research and applications.
