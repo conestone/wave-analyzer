@@ -75,8 +75,8 @@ plot_padding_sec: 60              # Plot padding around events (seconds)
 
 | Parameter | Description | Default | Units |
 |-----------|-------------|---------|-------|
-| `vertical_variable` | Vertical wave amplitude column name | "F002" | Column name |
-| `lateral_variable` | Lateral wave amplitude column name | "A003" | Column name |
+| `vertical_variable` | Vertical wave amplitude column name | "F001" | Column name |
+| `lateral_variable` | Lateral wave amplitude column name | "F002" | Column name |
 | `sampling_rate_hz` | Data sampling frequency | 8 | Hz |
 | `amplitude_threshold` | Minimum significant wave height | 0.05 | meters |
 | `significant_window_sec` | Peak search window | 5 | seconds |
