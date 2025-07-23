@@ -8,7 +8,7 @@ and generates detailed visualizations and summary reports organized by date.
 
 Author: Oliver Konold
 Date: 2025
-Version: 1.1 - Integrated DataLoader
+Version: 1.2
 License: MIT
 """
 
