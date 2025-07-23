@@ -179,7 +179,7 @@ python analyzer.py custom_config.yaml
 
 1. **Dynamic Data Loading**: 
    - DataLoader automatically detects number of sample columns
-   - Processes any number of samples per row (not limited to 32)
+   - Processes any number of samples per row
    - Handles multiple CSV files with different sample counts
    - Falls back to legacy single CSV if needed
 
