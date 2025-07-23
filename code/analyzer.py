@@ -83,7 +83,6 @@ class DataLoader:
         base_path (Path): Base directory path for data operations
         freq_hz (int): Sampling frequency in Hz
         dt (pd.Timedelta): Time delta between samples
-        sample_cols (list): Column names for sample data
         df_timeseries (pd.DataFrame): Processed time series data
     """
     
@@ -98,8 +97,32 @@ class DataLoader:
         self.base_path = Path(base_path)
         self.freq_hz = freq_hz
         self.dt = pd.to_timedelta(1 / freq_hz, unit="s")
-        self.sample_cols = [f"sample{i+1}" for i in range(32)]
         self.df_timeseries = None
+
+    def detect_sample_columns(self, df_raw: pd.DataFrame) -> list:
+        """
+        Automatically detect sample columns in the data.
+        
+        Args:
+            df_raw (pd.DataFrame): Raw data DataFrame
+            
+        Returns:
+            list: List of sample column names
+        """
+        # Calculate number of sample columns dynamically
+        # Expected format: ["direction", "s", "b", "date", sample1, sample2, ...]
+        metadata_cols = ["direction", "s", "b", "date"]
+        num_sample_cols = len(df_raw.columns) - len(metadata_cols)
+        
+        if num_sample_cols <= 0:
+            raise ValueError(f"No sample columns detected. Total columns: {len(df_raw.columns)}, "
+                           f"Expected at least {len(metadata_cols)} metadata columns")
+        
+        # Generate sample column names: sample1, sample2, ..., sampleN
+        sample_cols = [f"sample{i+1}" for i in range(num_sample_cols)]
+        print(f"[INFO] Detected {len(sample_cols)} sample columns: sample1 to sample{num_sample_cols}")
+        
+        return sample_cols
 
     def load_all(self):
         """
@@ -122,22 +145,67 @@ class DataLoader:
         if not all_csv_files:
             raise FileNotFoundError(f"No CSV files found in {input_dir}")
 
+        print(f"[INFO] Found {len(all_csv_files)} CSV files to process")
         all_series = []
 
-        for file in all_csv_files:
+        for file_idx, file in enumerate(all_csv_files):
+            print(f"[INFO] Processing file {file_idx + 1}/{len(all_csv_files)}: {file.name}")
+            
+            # Read the CSV with header=None first to inspect structure
             df_raw = pd.read_csv(file, header=None)
-            df_raw.columns = ["direction", "s", "b", "date"] + self.sample_cols
-            df_raw[self.sample_cols] = df_raw[self.sample_cols].astype(np.float32)
+            
+            # Auto-detect number of sample columns
+            if len(df_raw.columns) < 4:
+                raise ValueError(f"File {file.name} has insufficient columns. Expected at least 4, got {len(df_raw.columns)}")
+            
+            # Dynamically determine sample columns
+            sample_cols = self.detect_sample_columns(df_raw)
+            
+            # Assign column names: metadata + sample columns
+            df_raw.columns = ["direction", "s", "b", "date"] + sample_cols
+            
+            # Convert sample columns to float32 for efficiency
+            df_raw[sample_cols] = df_raw[sample_cols].astype(np.float32)
+            
+            # Expand samples for this file
+            expanded_series = self.expand_samples(df_raw, sample_cols)
+            all_series.append(expanded_series)
 
-            all_series.append(self.expand_samples(df_raw))
-
-        df_concat = pd.concat(all_series)
-        df_pivot = df_concat.pivot(index="timestamp", columns="direction", values="value").sort_index()
+        # Concatenate all series
+        print("[INFO] Concatenating all time series...")
+        df_concat = pd.concat(all_series, ignore_index=True)
+        
+        # Handle potential duplicate timestamps before pivoting
+        print("[INFO] Checking for duplicate timestamps...")
+        duplicates = df_concat.duplicated(subset=['timestamp', 'direction'])
+        if duplicates.any():
+            print(f"[WARNING] Found {duplicates.sum()} duplicate timestamp-direction pairs. Removing duplicates...")
+            df_concat = df_concat[~duplicates]
+        
+        # Pivot the data
+        print("[INFO] Pivoting data...")
+        try:
+            df_pivot = df_concat.pivot(index="timestamp", columns="direction", values="value")
+            df_pivot = df_pivot.sort_index()
+        except ValueError as e:
+            if "duplicate entries" in str(e):
+                print("[ERROR] Still have duplicates after cleaning. Investigating...")
+                # Group by timestamp and direction, take the mean of duplicates
+                print("[INFO] Aggregating duplicate entries by taking mean...")
+                df_concat_agg = df_concat.groupby(['timestamp', 'direction'])['value'].mean().reset_index()
+                df_pivot = df_concat_agg.pivot(index="timestamp", columns="direction", values="value")
+                df_pivot = df_pivot.sort_index()
+            else:
+                raise e
 
         self.df_timeseries = df_pivot
+        print(f"[OK] Successfully loaded and processed data. Shape: {df_pivot.shape}")
+        print(f"[OK] Available directions: {list(df_pivot.columns)}")
+        print(f"[OK] Time range: {df_pivot.index.min()} to {df_pivot.index.max()}")
+        
         return df_pivot
 
-    def expand_samples(self, df_raw: pd.DataFrame) -> pd.DataFrame:
+    def expand_samples(self, df_raw: pd.DataFrame, sample_cols: list) -> pd.DataFrame:
         """
         Expand sample columns into individual time series entries.
         
@@ -147,30 +215,49 @@ class DataLoader:
         
         Args:
             df_raw (pd.DataFrame): Raw data with sample columns
+            sample_cols (list): List of sample column names
             
         Returns:
             pd.DataFrame: Expanded time series data with individual timestamps
         """
         directions = df_raw["direction"].unique()
         all_expanded = []
+        num_samples = len(sample_cols)
 
         for direction in directions:
-            subset = df_raw[df_raw["direction"] == direction]
-            dates = np.repeat(subset["date"].values, len(self.sample_cols))
-            sample_idx = np.tile(np.arange(32), len(subset))
-            timestamps = pd.to_datetime(dates) + sample_idx * self.dt
-
-            values = subset[self.sample_cols].values.ravel()
-
+            subset = df_raw[df_raw["direction"] == direction].copy()
+            
+            # Create timestamp arrays more efficiently
+            base_timestamps = pd.to_datetime(subset["date"])
+            n_rows = len(subset)
+            
+            # Create sample indices array: [0, 1, 2, ..., num_samples-1] repeated for each row
+            sample_indices = np.tile(np.arange(num_samples), n_rows)
+            
+            # Create timestamps array: repeat each base timestamp num_samples times
+            timestamps = np.repeat(base_timestamps.values, num_samples)
+            
+            # Add time deltas
+            time_deltas = sample_indices * self.dt
+            final_timestamps = pd.to_datetime(timestamps) + pd.to_timedelta(time_deltas, unit='ns')
+            
+            # Get values more efficiently using numpy
+            values = subset[sample_cols].values.ravel()
+            
+            # Create series DataFrame
             series = pd.DataFrame({
-                "timestamp": timestamps,
+                "timestamp": final_timestamps,
                 "value": values,
                 "direction": direction
             })
-
+            
+            # Remove any NaN values that might have been introduced
+            series = series.dropna(subset=['value'])
+            
             all_expanded.append(series)
 
-        return pd.concat(all_expanded)
+        result = pd.concat(all_expanded, ignore_index=True)
+        return result
 
 
 class WaveEventAnalyzer:
@@ -603,7 +690,7 @@ class WaveEventAnalyzer:
         - All detected peaks (red dots) and bottoms (green dots)
         - Significant peaks (red circles) and bottoms (green circles) 
         - Event-specific title with date information
-        - Event statistics including frequency based on significant peaks
+        - Event statistics including duration and amplitude for both vertical and lateral
         
         Plots are saved in date-specific folders with format: {date}_{time}_event_{eventnumber}.png
         
@@ -647,6 +734,7 @@ class WaveEventAnalyzer:
                 plt.plot(df_win_offset.index, df_win_offset[self.vertical], label="Vertical Wave (offset)", color="blue")
 
                 # Offset lateral if available
+                mean_lateral = None
                 if self.lateral in df_win.columns:
                     mean_lateral = df_win[self.lateral].mean()
                     df_win_offset[self.lateral] = df_win[self.lateral] - mean_lateral
@@ -660,38 +748,71 @@ class WaveEventAnalyzer:
                 plt.plot(group["bottom_time"], group["bottom_val"] - mean_vertical, "go", label="Significant Bottoms")
 
                 # === Compute and show event stats ===
-                amplitude = group["amplitude_diff"].max()
+                amplitude_vertical = group["amplitude_diff"].max()
                 num_sig_peaks = group["peak_time"].nunique()
                 
-                # Calculate event frequency based on significant peaks
+                # Calculate event duration based on significant peaks
                 event_start_actual = group["peak_time"].min()
                 event_end_actual = group["peak_time"].max()
                 
-                # If only one significant peak, use a small default duration to avoid division by zero
-                if num_sig_peaks == 1:
-                    frequency_hz = 0.0  # Single peak has no frequency
-                    frequency_text = "N/A (single peak)"
+                # Calculate duration in seconds
+                event_duration_sec = (event_end_actual - event_start_actual).total_seconds()
+                
+                # Format duration text
+                if event_duration_sec < 60:
+                    duration_text = f"{event_duration_sec:.1f} s"
                 else:
-                    # Calculate duration in seconds
-                    event_duration_sec = (event_end_actual - event_start_actual).total_seconds()
-                    if event_duration_sec > 0:
-                        # Frequency = (number of peaks) / durations
-                        frequency_hz = (num_sig_peaks) / event_duration_sec
-                        frequency_text = f"{frequency_hz:.2f} Hz"
-                    else:
-                        frequency_hz = 0.0
-                        frequency_text = "N/A (zero duration)"
+                    minutes = int(event_duration_sec // 60)
+                    seconds = event_duration_sec % 60
+                    duration_text = f"{minutes}m {seconds:.1f}s"
 
-                # Add stats inside the plot (top-left)
+                # Calculate vertical deflections (peak and bottom distances from mean)
+                event_window_actual = df_win[(df_win.index >= event_start_actual) & (df_win.index <= event_end_actual)]
+                if len(event_window_actual) > 0:
+                    # Vertical deflections
+                    vertical_max_deflection = abs(event_window_actual[self.vertical].max() - mean_vertical)  # Peak distance from mean
+                    vertical_min_deflection = abs(event_window_actual[self.vertical].min() - mean_vertical)  # Bottom distance from mean
+                else:
+                    vertical_max_deflection = 0
+                    vertical_min_deflection = 0
+
+                # Calculate lateral amplitude and deflections if lateral data is available
+                amplitude_lateral = None
+                lateral_max_deflection = None
+                lateral_min_deflection = None
+                
+                if self.lateral in df_win.columns and mean_lateral is not None:
+                    if len(event_window_actual) > 0:
+                        lateral_max = event_window_actual[self.lateral].max()
+                        lateral_min = event_window_actual[self.lateral].min()
+                        amplitude_lateral = abs(lateral_max - lateral_min)
+                        
+                        # Lateral deflections
+                        lateral_max_deflection = abs(lateral_max - mean_lateral)  # Peak distance from mean
+                        lateral_min_deflection = abs(lateral_min - mean_lateral)  # Bottom distance from mean
+
+                # Add vertical stats inside the plot (top-left)
                 plt.text(
                     0.01, 0.98,
-                    f"Vertical Wave\nAmplitude: {amplitude*1000:.0f} mm\nSign. Peaks: {num_sig_peaks}\nFrequency: {frequency_text}",
+                    f"Vertical Wave\nAmplitude: {amplitude_vertical*1000:.0f} mm\nMax Deflection: {vertical_max_deflection*1000:.0f} mm\nMin Deflection: {vertical_min_deflection*1000:.0f} mm\nSign. Peaks: {num_sig_peaks}\nDuration: {duration_text}",
                     transform=plt.gca().transAxes,
                     fontsize=10,
                     color = "blue",
                     verticalalignment='top',
                     bbox=dict(facecolor='white', alpha=0.6, edgecolor='none')
                 )
+
+                # Add lateral stats directly below vertical stats with one line break
+                if amplitude_lateral is not None:
+                    plt.text(
+                        0.01, 0.78,  # Positioned lower to accommodate more vertical text
+                        f"\nLateral Wave\nAmplitude: {amplitude_lateral*1000:.0f} mm\nMax Deflection: {lateral_max_deflection*1000:.0f} mm\nMin Deflection: {lateral_min_deflection*1000:.0f} mm",
+                        transform=plt.gca().transAxes,
+                        fontsize=10,
+                        color = "orange",
+                        verticalalignment='top',
+                        bbox=dict(facecolor='white', alpha=0.6, edgecolor='none')
+                    )
 
                 # Format date and time for display in title
                 display_date = event_start_time.strftime("%Y.%m.%d")
@@ -720,6 +841,7 @@ class WaveEventAnalyzer:
         - Maximum amplitude difference within the event
         - Count of significant peaks in the event
         - Count of all peaks within the event time range
+        - Mean vertical and lateral values during the event
         - Plot filename for the corresponding event visualization
         
         Args:
@@ -741,6 +863,34 @@ class WaveEventAnalyzer:
             
             # Count all peaks within the event time range
             all_peaks = self.df.loc[start_time:end_time]["is_peak"].sum()
+            
+            # Calculate mean values for the event time window (with padding like in plots)
+            event_start_padded = start_time - self.padding
+            event_end_padded = end_time + self.padding
+            df_event_window = self.df[(self.df.index >= event_start_padded) & (self.df.index <= event_end_padded)]
+            
+            # Calculate means
+            mean_vertical = df_event_window[self.vertical].mean()
+            mean_lateral = df_event_window[self.lateral].mean() if self.lateral in df_event_window.columns else None
+
+            # Calculate deflections for the actual event time window (without padding)
+            event_window_actual = self.df[(self.df.index >= start_time) & (self.df.index <= end_time)]
+            
+            # Vertical deflections
+            if len(event_window_actual) > 0:
+                vertical_max_deflection = abs(event_window_actual[self.vertical].max() - mean_vertical)
+                vertical_min_deflection = abs(event_window_actual[self.vertical].min() - mean_vertical)
+            else:
+                vertical_max_deflection = 0
+                vertical_min_deflection = 0
+            
+            # Lateral deflections (if lateral data is available)
+            lateral_max_deflection = None
+            lateral_min_deflection = None
+            if self.lateral in df_event_window.columns and mean_lateral is not None:
+                if len(event_window_actual) > 0:
+                    lateral_max_deflection = abs(event_window_actual[self.lateral].max() - mean_lateral)
+                    lateral_min_deflection = abs(event_window_actual[self.lateral].min() - mean_lateral)
 
             # Extract date and event number from event_id (format: YYYYMMDD_XX)
             date_str, event_num = event_id.split("_")
@@ -753,16 +903,31 @@ class WaveEventAnalyzer:
             if date_str not in rows_by_date:
                 rows_by_date[date_str] = []
 
-            # Build summary row for this event
-            rows_by_date[date_str].append({
+            # Build summary row for this event (plot_file_name will be added last)
+            row = {
                 "event_id": int(event_num),  # Convert to integer for cleaner display
                 "event_start": start_time,
                 "event_end": end_time,
-                "amplitude": round(max_amplitude,3),
+                "amplitude": round(max_amplitude, 3),
                 "number_significant_peaks": sig_peaks,
                 "number_all_peaks": all_peaks,
-                "plot_file_name": plot_filename
-            })
+                "mean_vertical": round(mean_vertical, 3),
+                "vertical_max_deflection": round(vertical_max_deflection, 3),
+                "vertical_min_deflection": round(vertical_min_deflection, 3)
+            }
+            
+            # Add lateral data only if lateral data is available
+            if mean_lateral is not None:
+                row["mean_lateral"] = round(mean_lateral, 3)
+                if lateral_max_deflection is not None:
+                    row["lateral_max_deflection"] = round(lateral_max_deflection, 3)
+                if lateral_min_deflection is not None:
+                    row["lateral_min_deflection"] = round(lateral_min_deflection, 3)
+            
+            # Add plot_file_name as the last column
+            row["plot_file_name"] = plot_filename
+            
+            rows_by_date[date_str].append(row)
 
         # Save separate CSV files for each date
         for date_str, rows in rows_by_date.items():

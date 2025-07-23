@@ -1,9 +1,9 @@
 # Data specific parameters 
-vertical_variable: "A001"
-lateral_variable: "A002"
+vertical_variable: "F001"
+lateral_variable: "F002"
 
 # Analysis specific parameters
-sampling_rate_hz: 8               # if the sampling frequency changes, change it here
+sampling_rate_hz: 32               # if the sampling frequency changes, change it here
 amplitude_threshold: 0.05         # minimum difference between peak and bottom in m
 significant_window_sec: 5         # seconds to look around each peak
 event_gap_sec: 60                 # max gap between peaks in same event

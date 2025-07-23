@@ -4,16 +4,18 @@ A comprehensive Python tool for analyzing wave events from boat wave time series
 
 ## Features
 
-- **Multi-File Processing**: Processes multiple CSV files from input directory automatically
+- **Multi-File Processing**: Processes multiple CSV files from input directory automatically with dynamic sample column detection
 - **Automated Peak Detection**: Uses scipy signal processing to identify wave peaks and bottoms
 - **Event Grouping**: Groups nearby significant wave events based on configurable time gaps
 - **Date Organization**: Automatically organizes outputs into date-specific folders (YYYYMMDD format)
 - **Comprehensive Visualization**: 
   - Overview plots showing all events on the full time series for each date
-  - Detailed individual event plots with peak/bottom markers and statistics
+  - Detailed individual event plots with peak/bottom markers and comprehensive statistics
   - Automatic mean offset for better visualization
-- **Summary Reports**: CSV tables with event statistics organized by date
-- **Flexible Configuration**: All analysis parameters configurable via YAML file
+  - Dual-wave analysis (vertical and lateral) with color-coded statistics
+- **Enhanced Statistics**: Detailed deflection analysis and amplitude measurements for both wave components
+- **Summary Reports**: Comprehensive CSV tables with event statistics organized by date
+- **Flexible Input Support**: Supports variable number of sample columns (not limited to 32)
 - **Auto-Dependency Management**: Automatically checks and installs required packages
 
 ## Requirements
@@ -84,24 +86,31 @@ plot_padding_sec: 60              # Plot padding around events (seconds)
 ## Input Data Format
 
 ### Method 1: Multiple CSV Files (Recommended)
-Place multiple CSV files in the `input/` directory. Each file should contain:
-- **Direction column**: Wave measurement direction identifier (lateral, vertical)
-- **Date column**: Date information for measurements
-- **Sample columns**: sample columns (sample1, sample2, ..., sample32) containing wave measurements
+Place multiple CSV files in the `input/` directory. Each file should contain headerless data with:
+- **Column 1**: Direction identifier (e.g., F002, A003)
+- **Column 2**: s parameter
+- **Column 3**: b parameter  
+- **Column 4**: Date/timestamp
+- **Columns 5+**: Sample data (sample1, sample2, ..., sampleN)
+
+**Key Features:**
+- **Dynamic Sample Detection**: Automatically detects any number of sample columns (not limited to 32)
+- **No Headers Required**: Files are processed without headers
+- **Flexible Sample Count**: Supports varying numbers of samples per file
+
+Example CSV structure (no headers):
+```csv
+F002,0,0,2025-01-15 10:00:00,0.123,0.156,0.189,0.145,...,0.089
+A003,0,0,2025-01-15 10:00:00,0.045,0.067,0.078,0.056,...,0.034
+F002,0,0,2025-01-15 10:00:01,0.234,0.267,0.298,0.276,...,0.198
+...
+```
 
 ### Method 2: Legacy Single CSV File
 Single CSV file with time series data containing:
 - **Time column**: Either `zeitstempel` (German) or `timestamp` (English)
   - Format: `YYYY-MM-DD HH:MM:SS.ffffff`
 - **Wave amplitude columns**: Specified in config parameters
-
-Example multi-file CSV structure:
-```csv
-direction,s,b,date,sample1,sample2,...,sample32
-F002,0,0,2025-01-15 10:00:00,0.123,0.156,...,0.089
-A003,0,0,2025-01-15 10:00:00,0.045,0.067,...,0.034
-...
-```
 
 ## Usage
 
@@ -128,13 +137,26 @@ python analyzer.py custom_config.yaml
 - **`YYYYMMDD_HHMMSS_event_XX.png`**: Detailed individual event plots with timing information
 
 ### Individual Event Plots Include:
-- Vertical and lateral wave signals (offset to mean = 0)
-- Significant peaks (red circles) and bottoms (green circles)
-- Event statistics: amplitude, number of significant peaks, frequency
-- Zero reference line for better visualization
+- **Vertical Wave Statistics (Blue Text Box)**:
+  - Amplitude (mm)
+  - Max Deflection (peak distance from mean, mm)
+  - Min Deflection (bottom distance from mean, mm)
+  - Number of significant peaks
+  - Event duration
+
+- **Lateral Wave Statistics (Orange Text Box)**:
+  - Amplitude (mm)
+  - Max Deflection (peak distance from mean, mm)
+  - Min Deflection (bottom distance from mean, mm)
+
+- **Visual Elements**:
+  - Both wave signals offset to mean = 0 for better comparison
+  - Significant peaks (red circles) and bottoms (green circles)
+  - Zero reference line
+  - Color-coded statistics matching wave line colors
 
 ### Tables (output/tables/YYYYMMDD/)
-- **`event_summary.csv`**: Summary statistics for all events on that date
+- **`event_summary.csv`**: Comprehensive summary statistics for all events on that date
 
 ### Event Summary Table Columns
 | Column | Description |
@@ -145,30 +167,61 @@ python analyzer.py custom_config.yaml
 | `amplitude` | Maximum amplitude difference in event (meters) |
 | `number_significant_peaks` | Count of significant peaks |
 | `number_all_peaks` | Total peaks in event time range |
+| `mean_vertical` | Mean vertical wave value during event |
+| `vertical_max_deflection` | Maximum vertical deflection from mean |
+| `vertical_min_deflection` | Minimum vertical deflection from mean |
+| `mean_lateral` | Mean lateral wave value during event (if available) |
+| `lateral_max_deflection` | Maximum lateral deflection from mean (if available) |
+| `lateral_min_deflection` | Minimum lateral deflection from mean (if available) |
 | `plot_file_name` | Corresponding plot filename |
 
 ## Algorithm Overview
 
-1. **Data Loading**: 
-   - Uses DataLoader class to process multiple CSV files
-   - Expands 32 samples per row into proper time series
+1. **Dynamic Data Loading**: 
+   - DataLoader automatically detects number of sample columns
+   - Processes any number of samples per row (not limited to 32)
+   - Handles multiple CSV files with different sample counts
    - Falls back to legacy single CSV if needed
+
 2. **Peak Detection**: Use scipy.signal.find_peaks to identify local maxima and minima
+
 3. **Significance Filtering**: Find peak-bottom pairs exceeding amplitude threshold within time window
+
 4. **Event Grouping**: Group nearby significant pairs into discrete events based on time gaps
-5. **Date Organization**: Automatically create date-specific output folders
-6. **Visualization**: Generate overview and detailed plots for each date
-7. **Reporting**: Create summary statistics organized by date
 
-## Key Improvements in Version 1.1
+5. **Dual-Wave Analysis**: Calculate comprehensive statistics for both vertical and lateral components
 
-- **Multi-File Support**: Processes all CSV files in input directory automatically
-- **DataLoader Integration**: Proper handling of multi-sample data format
-- **Date-Based Organization**: All outputs organized by date (YYYYMMDD folders)
-- **Enhanced Plotting**: Better filenames with date/time information
-- **Improved Statistics**: Event frequency calculations and enhanced visualizations
-- **Auto-Dependency Management**: Automatic package installation
-- **Event Numbering**: Events numbered separately for each date (1, 2, 3, etc.)
+6. **Deflection Analysis**: Measure peak and bottom distances from respective mean lines
+
+7. **Date Organization**: Automatically create date-specific output folders
+
+8. **Enhanced Visualization**: Generate color-coded plots with comprehensive statistics
+
+9. **Comprehensive Reporting**: Create detailed summary tables with all calculated metrics
+
+## Key Improvements in Version 1.2
+
+- **Dynamic Sample Column Detection**: Automatically handles any number of sample columns
+- **Enhanced Deflection Analysis**: Max/min deflection calculations for both wave components
+- **Improved Statistics Display**: Color-coded text boxes with comprehensive wave metrics
+- **Better Table Output**: Extended CSV tables with deflection data and mean values
+- **Robust Data Handling**: Improved duplicate detection and error handling
+- **Flexible Input Support**: No longer limited to 32 samples per row
+- **Duration Calculation**: Event duration replaces frequency calculation for better clarity
+
+## Deflection Analysis
+
+The analyzer now provides detailed deflection analysis:
+
+- **Max Deflection**: Largest distance from any peak to the mean line
+- **Min Deflection**: Largest distance from any bottom to the mean line
+- **Mean Offset**: All plots show signals offset to their respective means for better comparison
+- **Dual Analysis**: Separate deflection calculations for vertical and lateral waves
+
+This provides insight into:
+- Wave symmetry around the mean
+- Maximum excursions in both directions
+- Relative amplitudes between wave components
 
 ## Troubleshooting
 
@@ -179,43 +232,44 @@ python analyzer.py custom_config.yaml
 - Check that files have `.csv` extension
 
 **"Missing required columns"**
-- Verify `vertical_variable` and `lateral_variable` in config match your data columns
+- Verify `vertical_variable` and `lateral_variable` in config match your data direction identifiers
 - Check column names are exact matches (case-sensitive)
+
+**"No sample columns detected"**
+- Ensure CSV files have at least 5 columns (direction, s, b, date + samples)
+- Verify file structure matches expected format
+
+**"Index contains duplicate entries"**
+- The analyzer now automatically handles duplicates
+- Check data quality if frequent duplicates occur
 
 **"Config file not found"**
 - Verify `config.yaml` exists in the project root
 - Check file path in batch script or command line
 
-**"Time column not found"** (Legacy mode)
-- Ensure your CSV has either `zeitstempel` or `timestamp` column
-- Only applies when falling back to single CSV file mode
-
-**Missing packages**
-- The script auto-installs packages, but ensure you have internet connectivity
-- For offline use, manually install: `pip install PyYAML pandas numpy matplotlib scipy tqdm`
-
 **Empty output**
 - Check if `amplitude_threshold` is too high for your data
-- Verify column names match your data exactly
+- Verify direction identifiers match your data exactly
 - Check if sampling rate is correct
 - Ensure data contains actual wave measurements
 
 ### Performance Notes
 
-- Multiple CSV files are processed efficiently with progress bars
-- Large datasets may take several minutes to process
+- CSV files with any number of sample columns are processed efficiently
+- Progress bars show processing status for large datasets
 - Date-specific organization improves output management
+- Automatic duplicate handling prevents pivot errors
 - Consider adjusting `event_gap_sec` and `significant_window_sec` for optimal event detection
 
-### Output Organization
+### Data Quality
 
-- All outputs are automatically organized by date
-- Each date gets separate folders for plots and tables
-- Event numbering restarts at 1 for each date
-- Filenames include date/time information for easy reference
+- The analyzer handles variable sample counts automatically
+- Duplicate timestamps are detected and resolved
+- Missing values are properly handled
+- Data validation ensures robust processing
 
 ## Author
 
 **Oliver Konold**  
-Version: 1.1 
+Version: 1.2 - Enhanced Deflection Analysis and Dynamic Sample Detection  
 Year: 2025
