@@ -60,8 +60,8 @@ Edit `config.yaml` to customize the analysis parameters:
 
 ```yaml
 # Data specific parameters 
-vertical_variable: "F002"        # Name of vertical wave column
-lateral_variable: "A003"         # Name of lateral wave column
+vertical_variable: "F001"        # Name of vertical wave column
+lateral_variable: "F002"         # Name of lateral wave column
 
 # Analysis specific parameters
 sampling_rate_hz: 8               # Sampling frequency in Hz
